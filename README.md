@@ -45,7 +45,7 @@ python -m http.server 5173
 
 ## النشر مجاناً على GitHub Pages
 
-1. اعمل مستودع جديد على GitHub (مثلاً `addad`) واتركه فاضي.
+1. المستودع: `AbdelatefElshafei/StudyHelper`.
 2. من داخل المجلد ده:
 
 ```bash
@@ -65,7 +65,7 @@ git branch -M main
 ```
 
 ```bash
-git remote add origin https://github.com/USERNAME/addad.git
+git remote add origin https://github.com/AbdelatefElshafei/StudyHelper.git
 ```
 
 ```bash
@@ -73,7 +73,7 @@ git push -u origin main
 ```
 
 3. على GitHub: **Settings → Pages → Build and deployment → Source: Deploy from a branch → Branch: `main` / `(root)` → Save**.
-4. بعد دقيقة الرابط هيكون: `https://USERNAME.github.io/addad/`
+4. بعد دقيقة الرابط هيكون: `https://abdelatefelshafei.github.io/StudyHelper/`
 
 كل المسارات في المشروع نسبية، فالتطبيق بيشتغل من أي مجلد فرعي بدون تعديل.
 
