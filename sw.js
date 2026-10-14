@@ -1,5 +1,5 @@
 /* العدّاد — Service Worker: يخلي التطبيق يشتغل أوفلاين بالكامل */
-const VERSION = 'addad-v1.0.0';
+const VERSION = 'addad-v1.1.0';
 const SHELL = [
   './',
   './index.html',

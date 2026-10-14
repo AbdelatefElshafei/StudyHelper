@@ -65,9 +65,37 @@
       reviewIntervals: [1, 7, 30],
       examFocusDays: 3,
       bufferDays: 2,
+      openHorizonDays: 21,
       maxSubjectsPerDay: 3,
       theme: 'auto',
     };
+  }
+
+  // لون ثابت للمادة (1..8)، ولو المواد زادت عن 8 بنبدأ من الأول
+  function nextSlot() {
+    const used = new Set(state ? state.subjects.map((s) => s.slot) : []);
+    for (let i = 1; i <= 8; i++) if (!used.has(i)) return i;
+    return ((state ? state.subjects.length : 0) % 8) + 1;
+  }
+  // سطور نصية → محاضرات: "اسم المحاضرة | الساعات" (الساعات اختيارية)
+  function parseLectureLines(text, defaultHours) {
+    return String(text || '').split('\n').map((line) => line.trim()).filter(Boolean).map((line) => {
+      const m = line.match(/^(.*?)[|،,]\s*([0-9]+(?:\.[0-9]+)?)\s*(?:س|ساعة|ساعات|h)?\s*$/);
+      const title = (m ? m[1] : line).trim().slice(0, 120);
+      const hours = clamp(m ? Number(m[2]) : defaultHours, 0.5, 40);
+      return title ? { title, hours } : null;
+    }).filter(Boolean);
+  }
+  function addLectures(subjectId, items) {
+    let order = P.lessonsOf(state, subjectId).length;
+    const added = items.map((it) => {
+      const l = { id: uid('l'), subjectId, title: it.title, hours: it.hours, doneHours: 0, mastery: 0, done: false, completedAt: null, reviews: [], order: order++ };
+      state.lessons.push(l);
+      return l;
+    });
+    const subj = subjectOf(subjectId);
+    if (subj && !subj.currentLessonId && added[0]) subj.currentLessonId = added[0].id;
+    return added;
   }
 
   function load() {
@@ -94,28 +122,29 @@
     }, 50);
   }
 
-  function buildSubjectsFromSeed(seed, examStart, l2) {
+  function buildSubjectsFromSeed(seed) {
     const subjects = [];
     const lessons = [];
-    seed.subjects.forEach((s) => {
+    (seed.subjects || []).forEach((s, idx) => {
       const id = uid('s');
-      let name = s.name;
-      if (s.key === 'l2' && SYL.secondLanguages[l2]) name = SYL.secondLanguages[l2];
       subjects.push({
-        id, key: s.key, name, short: s.short, slot: s.slot, enabled: s.enabled !== false,
-        examDate: s.examDate || P.addDays(examStart, s.examOffset || 0), examOffset: s.examOffset || 0,
+        id, key: s.key || 'custom', name: s.name, short: s.short || String(s.name || '').slice(0, 10),
+        slot: clamp(Number(s.slot) || (idx % 8) + 1, 1, 8), enabled: s.enabled !== false,
+        examDate: s.examDate || null, currentLessonId: null,
       });
       (s.lessons || []).forEach((l, i) => {
         const [title, hours] = Array.isArray(l) ? l : [l.title, l.hours];
         lessons.push({ id: uid('l'), subjectId: id, title, hours: Number(hours) || 1, doneHours: 0, mastery: 0, done: false, completedAt: null, reviews: [], order: i });
       });
+      const first = lessons.find((l) => l.subjectId === id);
+      if (first) subjects[subjects.length - 1].currentLessonId = first.id;
     });
     return { subjects, lessons };
   }
 
-  function createState({ name, examStart, l2, schoolHours, offHours }) {
+  function createState({ name, schoolHours, offHours }) {
     const seed = pendingSharedPlan || SYL;
-    const { subjects, lessons } = buildSubjectsFromSeed(seed, examStart, l2);
+    const { subjects, lessons } = buildSubjectsFromSeed(seed);
     const settings = defaultSettings();
     for (let i = 0; i <= 4; i++) settings.dailyHours[i] = schoolHours;
     settings.dailyHours[5] = offHours;
@@ -123,7 +152,7 @@
     return {
       version: 1,
       createdAt: today(),
-      profile: { name: name || '', track: 'science', examStart, secondLang: l2 },
+      profile: { name: name || '' },
       settings,
       subjects, lessons,
       log: [],
@@ -254,7 +283,7 @@
   }
 
   function paceChip(p) {
-    if (p.status === 'done') return '<span class="chip good">🎉 المنهج خلص</span>';
+    if (p.status === 'done') return '<span class="chip good">🎉 المواد خلصت</span>';
     if (p.status === 'green') return '<span class="chip good">✅ في المسار</span>';
     if (p.status === 'yellow') return '<span class="chip warn">⚠️ محتاج شد شوية</span>';
     return '<span class="chip bad">🔴 متأخر عن الخطة</span>';
@@ -262,7 +291,7 @@
   function paceMsg(p) {
     if (p.status === 'done') return 'خلصت كل الدروس! فاضل المراجعات بس.';
     const base = `محتاج ${h1(p.requiredPerDay)} س/يوم وعندك ${h1(p.availablePerDay)} س/يوم.`;
-    if (p.status === 'red') return base + ' زوّد ساعاتك من الإعدادات، أو خلّي بعض الدروس أقصر من المنهج.';
+    if (p.status === 'red') return base + ' زوّد ساعاتك من الإعدادات، أو خلّي بعض المحاضرات أقصر.';
     if (p.status === 'yellow') return base + ' الهامش ضيق، حافظ على يومك.';
     return base + ' كمّل كده.';
   }
@@ -281,9 +310,19 @@
     const examMode = first && P.daysBetween(t, first.examDate) <= focusDays && P.daysBetween(t, first.examDate) >= 0;
     const greeting = state.profile.name ? `أهلاً يا ${esc(state.profile.name)} 👋` : 'أهلاً بيك 👋';
 
+    if (!state.subjects.length) {
+      root.innerHTML = `
+        <div class="view-head"><div><h1>${greeting}</h1><div class="sub">${fdate(t, fmtLong)}</div></div></div>
+        <div class="card"><div class="empty"><div class="big">📚</div>ضيف أول مادة ومحاضراتها،<br>وأنا أبني لك خطة اليوم.<br><button class="btn primary" data-action="add-subject" style="margin-top:12px">＋ ضيف مادة</button></div></div>`;
+      return;
+    }
+
     let countdown = '';
     if (!first) {
-      countdown = `<div class="empty"><div class="big">🎓</div>خلصت كل الامتحانات! بالتوفيق في النتيجة.</div>`;
+      countdown = `
+        <div class="row between wrap small">${paceChip(pace)}<span class="muted xs">باقي ${hoursText(pace.remainingTotal)} مذاكرة</span></div>
+        <div class="pace-bar ${pace.status}" style="margin-top:8px"><i style="width:${clamp(Math.round(pace.ratio * 100), 2, 100)}%"></i></div>
+        <div class="xs text-2" style="margin-top:6px">${paceMsg(pace)}</div>`;
     } else {
       const n = P.daysBetween(t, first.examDate);
       const word = n === 0 ? 'النهاردة' : n === 1 ? 'يوم' : n === 2 ? 'يومين' : n <= 10 ? 'أيام' : 'يوم';
@@ -311,13 +350,24 @@
 
     let list = '';
     if (!tasks.length) {
-      if (avail <= 0) list = `<div class="card"><div class="empty"><div class="big">🛌</div>النهاردة من غير مذاكرة (0 ساعات).<br><button class="btn sm soft" data-action="hours" style="margin-top:10px">غيّر ساعات النهاردة</button></div></div>`;
+      if (!state.lessons.length) list = `<div class="card"><div class="empty"><div class="big">📝</div>ضيف محاضرات لموادّك من تبويب "المواد".</div></div>`;
+      else if (avail <= 0) list = `<div class="card"><div class="empty"><div class="big">🛌</div>النهاردة من غير مذاكرة (0 ساعات).<br><button class="btn sm soft" data-action="hours" style="margin-top:10px">غيّر ساعات النهاردة</button></div></div>`;
       else if (pace.status === 'done') list = `<div class="card"><div class="empty"><div class="big">🏆</div>مفيش حاجة مستحقة النهاردة. استريح أو ضيف مهمة حرة.</div></div>`;
       else list = `<div class="card"><div class="empty"><div class="big">🤔</div>مفيش مهام. جرّب "إعادة توزيع".</div></div>`;
     } else {
       list = tasks.map(taskCard).join('');
     }
     const allDone = tasks.length && doneN === tasks.length;
+
+    const currentRows = state.subjects.filter((s) => s.enabled && !P.expired(s, t)).map((s) => {
+      const cl = P.currentLesson(state, s);
+      return `
+        <div class="lesson" data-action="pick-current" data-id="${s.id}" role="button" tabindex="0">
+          <span class="dot" style="--c:var(--s${s.slot})"></span>
+          <div class="grow"><div class="l-title">${esc(s.name)}</div><div class="l-meta">${cl ? '📍 ' + esc(cl.title) : s.examDate && !P.expired(s, t) ? 'خلصت كل المحاضرات 🎉' : 'ضيف محاضرات'}</div></div>
+          <span class="chip">غيّر</span>
+        </div>`;
+    }).join('');
 
     root.innerHTML = `
       <div class="view-head">
@@ -327,6 +377,10 @@
       ${installBanner}
       <div class="card">${countdown}</div>
       ${examBanner}
+      <div class="card">
+        <div class="card-title"><h3>📍 محاضراتك الحالية</h3><span class="xs muted">اضغط لتغيير المحاضرة</span></div>
+        ${currentRows || '<p class="muted small">مفيش مواد مفعّلة.</p>'}
+      </div>
       <div class="row between" style="margin:4px 0 10px">
         <h2 class="row">مهام اليوم <span class="chip num">${doneN}/${tasks.length} · ${totalMin} د</span></h2>
         <button class="btn sm soft num" data-action="hours">⏱ ${h1(avail)} س</button>
@@ -380,8 +434,9 @@
 
     const subjects = stats.map((x) => {
       const s = x.subject;
-      const passed = x.daysLeft < 0;
+      const passed = x.daysLeft != null && x.daysLeft < 0;
       const color = `var(--s${s.slot})`;
+      const cur = P.currentLesson(state, s);
       const lessons = x.lessons.map((l) => {
         const rem = P.remainingOfLesson(l);
         const meta = l.done
@@ -391,7 +446,7 @@
           <div class="lesson" data-action="lesson" data-id="${l.id}" role="button" tabindex="0">
             <span class="mastery m${l.mastery || 0}" aria-label="${MASTERY[l.mastery || 0]}"><i></i><i></i><i></i></span>
             <div class="grow"><div class="l-title">${esc(l.title)}</div><div class="l-meta">${meta}${due.has(l.id) ? ' · <b style="color:var(--warn-text)">مراجعة مستحقة</b>' : ''}</div></div>
-            ${l.done ? '<span class="chip good">✓</span>' : ''}
+            ${l.done ? '<span class="chip good">✓</span>' : cur && cur.id === l.id ? '<span class="chip accent">📍 الحالية</span>' : ''}
           </div>`;
       }).join('');
       return `
@@ -399,15 +454,15 @@
           <summary>
             <div class="row between">
               <div class="row grow"><span class="dot" style="--c:${color}"></span><h3 class="grow">${esc(s.name)}</h3></div>
-              ${!s.enabled ? '<span class="chip">غير مضافة</span>' : passed ? '<span class="chip good">خلص الامتحان</span>' : `<span class="chip num">امتحان ${fdate(s.examDate)}</span>`}
+              ${!s.enabled ? '<span class="chip">غير مضافة</span>' : passed ? '<span class="chip good">خلص الموعد</span>' : s.examDate ? `<span class="chip num">موعد ${fdate(s.examDate)}</span>` : ''}
             </div>
             <div class="bar" style="--c:${color}"><i style="width:${Math.round(x.progress * 100)}%"></i></div>
-            <div class="row between xs muted num"><span>${x.doneCount}/${x.lessonCount} دروس · ${Math.round(x.progress * 100)}%</span><span>باقي ${hoursText(x.remainingHours)}</span></div>
+            <div class="row between xs muted num"><span>${x.doneCount}/${x.lessonCount} محاضرات · ${Math.round(x.progress * 100)}%</span><span>باقي ${hoursText(x.remainingHours)}</span></div>
           </summary>
           <div class="subj-body">
-            ${lessons || '<p class="muted small" style="padding:10px 0">مفيش دروس. ضيف أول درس.</p>'}
+            ${lessons || '<p class="muted small" style="padding:10px 0">مفيش محاضرات. ضيف أول محاضرة.</p>'}
             <div class="btn-row" style="margin-top:10px">
-              <button class="btn sm soft" data-action="add-lesson" data-id="${s.id}">＋ درس</button>
+              <button class="btn sm soft" data-action="add-lesson" data-id="${s.id}">＋ محاضرات</button>
               <button class="btn sm soft" data-action="subject-menu" data-id="${s.id}">⚙️ إعدادات المادة</button>
             </div>
           </div>
@@ -416,16 +471,16 @@
 
     root.innerHTML = `
       <div class="view-head">
-        <div><h1>المنهج</h1><div class="sub">${esc(SYL.trackName)} · ${lessonCount} درس · ${doneCount} خلصت</div></div>
+        <div><h1>المواد</h1><div class="sub">${state.subjects.length} مواد · ${lessonCount} محاضرة · ${doneCount} خلصت</div></div>
         <button class="btn sm soft" data-action="add-subject">＋ مادة</button>
       </div>
-      <div class="card">
-        <div class="card-title"><h3>خريطة المنهج</h3><span class="xs muted">كل مربع = درس</span></div>
+      ${state.subjects.length ? `<div class="card">
+        <div class="card-title"><h3>خريطة المواد</h3><span class="xs muted">كل مربع = محاضرة</span></div>
         <div class="heat">${heat}</div>
         <div class="legend">
           <span><i class="cell m0"></i>لم أبدأ</span><span><i class="cell m1"></i>ذاكرت</span><span><i class="cell m2"></i>راجعت</span><span><i class="cell m3"></i>متقن</span><span><i class="cell due"></i>مراجعة مستحقة</span>
         </div>
-      </div>
+      </div>` : '<div class="card"><div class="empty"><div class="big">📚</div>لسه مفيش مواد. اضغط "＋ مادة" وابدأ.</div></div>'}
       ${subjects}
     `;
     $$('details.subject', root).forEach((d) => d.addEventListener('toggle', () => {
@@ -447,8 +502,8 @@
     const first = P.firstExam(state, t);
 
     let finishCard = '';
-    if (pf.status === 'done') finishCard = '<div class="empty"><div class="big">🏁</div>خلصت المنهج كله. دلوقتي المراجعة هي اللعبة.</div>';
-    else if (pf.status === 'insufficient') finishCard = `<p class="text-2">ذاكر <b>3 أيام</b> على الأقل (${pf.activeDays}/3 لحد دلوقتي) وهقولك بسرعتك الحالية هتخلص المنهج إمتى.</p>`;
+    if (pf.status === 'done') finishCard = '<div class="empty"><div class="big">🏁</div>خلصت كل المحاضرات. دلوقتي المراجعة هي اللعبة.</div>';
+    else if (pf.status === 'insufficient') finishCard = `<p class="text-2">ذاكر <b>3 أيام</b> على الأقل (${pf.activeDays}/3 لحد دلوقتي) وهقولك بسرعتك الحالية هتخلص موادّك إمتى.</p>`;
     else if (pf.status === 'stalled') finishCard = '<p class="text-2">آخر أسبوع مفيش مذاكرة مسجلة. أول جلسة بومودورو هتصلّح الرقم ده.</p>';
     else {
       const ok = pf.margin >= 0;
@@ -457,7 +512,7 @@
       const days2 = Math.ceil((pace.remainingTotal + pace.pendingReviewHours) / boost);
       const finish2 = P.addDays(t, days2);
       finishCard = `
-        <p class="text-2">بسرعتك الحالية (<b class="num">${h1(pf.hoursPerDay)} س/يوم</b>) هتخلص المنهج يوم</p>
+        <p class="text-2">بسرعتك الحالية (<b class="num">${h1(pf.hoursPerDay)} س/يوم</b>) هتخلص كل المحاضرات يوم</p>
         <div class="row between wrap" style="margin:6px 0">
           <div style="font-size:22px;font-weight:800" class="num">${WD[P.weekday(pf.finish)]} ${fdate(pf.finish, fmtFull)}</div>
           ${first ? `<span class="chip ${ok ? 'good' : 'bad'}">${ok ? '✅ قبل الامتحان بـ ' + daysText(pf.margin) : '🔴 بعد الامتحان بـ ' + daysText(-pf.margin)}</span>` : ''}
@@ -479,7 +534,7 @@
       <div class="tiles">
         <div class="tile"><div class="v num">🔥 ${streak}</div><div class="k">${streak === 1 ? 'يوم متواصل' : streak === 2 ? 'يومين متواصلين' : 'أيام متواصلة'}</div></div>
         <div class="tile"><div class="v num">${h1(v7.minutes / 60)}</div><div class="k">ساعات آخر 7 أيام</div></div>
-        <div class="tile"><div class="v num">${pct}%</div><div class="k">من المنهج</div></div>
+        <div class="tile"><div class="v num">${pct}%</div><div class="k">من المحاضرات</div></div>
       </div>
       <div class="card"><div class="card-title"><h3>📅 تاريخ الانتهاء المتوقع</h3></div>${finishCard}</div>
       <div class="card">
@@ -547,20 +602,12 @@
     const s = state.settings;
     const dh = s.dailyHours;
     const themeSeg = ['auto', 'light', 'dark'].map((k) => `<button class="${s.theme === k ? 'on' : ''}" data-action="theme" data-v="${k}">${{ auto: 'تلقائي', light: 'فاتح', dark: 'داكن' }[k]}</button>`).join('');
-    const l2 = state.profile.secondLang || 'fr';
     root.innerHTML = `
       <div class="view-head"><div><h1>الإعدادات</h1><div class="sub">كل حاجة بتتحفظ تلقائياً</div></div></div>
 
       <div class="card">
         <div class="card-title"><h3>الطالب</h3></div>
         <div class="field"><label for="st-name">الاسم</label><input class="input" id="st-name" data-setting="name" value="${esc(state.profile.name)}" maxlength="30" /></div>
-        <div class="field"><label for="st-exam">تاريخ أول امتحان</label>
-          <div class="row"><input class="input grow" id="st-exam" type="date" data-setting="examStart" value="${state.profile.examStart}" /><button class="btn sm soft" data-action="apply-exam-dates">طبّق على المواد</button></div>
-          <span class="hint">"طبّق" بيحسب تاريخ امتحان كل مادة من الجدول المعتاد. وتقدر تعدّل كل مادة من المنهج.</span>
-        </div>
-        <div class="field"><label for="st-l2">اللغة الأجنبية الثانية</label>
-          <select class="input" id="st-l2" data-setting="secondLang">${Object.entries(SYL.secondLanguages).map(([k, v]) => `<option value="${k}" ${k === l2 ? 'selected' : ''}>${v}</option>`).join('')}</select>
-        </div>
       </div>
 
       <div class="card">
@@ -569,8 +616,9 @@
         <p class="hint xs" style="margin-top:6px">المتوسط: <b class="num">${h1(P.avgWeeklyHours(state))} س/يوم</b>. تقدر تغيّر يوم بعينه من زرار الساعة في صفحة اليوم.</p>
         <div class="grid-2" style="margin-top:10px">
           <div class="field"><label for="st-max">مواد في اليوم (حد أقصى)</label><select class="input" id="st-max" data-setting="maxSubjectsPerDay">${[2, 3, 4].map((n) => `<option value="${n}" ${s.maxSubjectsPerDay === n ? 'selected' : ''}>${n}</option>`).join('')}</select></div>
-          <div class="field"><label for="st-focus">وضع الامتحانات قبل الامتحان بـ</label><select class="input" id="st-focus" data-setting="examFocusDays">${[1, 2, 3, 4, 5].map((n) => `<option value="${n}" ${s.examFocusDays === n ? 'selected' : ''}>${daysText(n)}</option>`).join('')}</select></div>
+          <div class="field"><label for="st-focus">تركيز على مادة قبل موعدها بـ</label><select class="input" id="st-focus" data-setting="examFocusDays">${[1, 2, 3, 4, 5].map((n) => `<option value="${n}" ${s.examFocusDays === n ? 'selected' : ''}>${daysText(n)}</option>`).join('')}</select></div>
         </div>
+        <div class="field"><label for="st-open">مادة من غير موعد: وزّعها على</label><select class="input" id="st-open" data-setting="openHorizonDays">${[7, 14, 21, 30, 45, 60].map((n) => `<option value="${n}" ${s.openHorizonDays === n ? 'selected' : ''}>${daysText(n)}</option>`).join('')}</select><span class="hint">بيحدد سرعة الخطة للمواد اللي ملهاش موعد امتحان.</span></div>
       </div>
 
       <div class="card">
@@ -610,12 +658,7 @@
     const k = inp.dataset.setting;
     const s = state.settings;
     if (k === 'name') state.profile.name = inp.value.trim();
-    else if (k === 'examStart') { if (inp.value) state.profile.examStart = inp.value; }
-    else if (k === 'secondLang') {
-      state.profile.secondLang = inp.value;
-      const subj = state.subjects.find((x) => x.key === 'l2');
-      if (subj) subj.name = SYL.secondLanguages[inp.value] || subj.name;
-    }
+    else if (k === 'openHorizonDays') s.openHorizonDays = Number(inp.value);
     else if (k === 'dh') s.dailyHours[inp.dataset.i] = clamp(Number(inp.value) || 0, 0, 16);
     else if (k === 'maxSubjectsPerDay') s.maxSubjectsPerDay = Number(inp.value);
     else if (k === 'examFocusDays') s.examFocusDays = Number(inp.value);
@@ -627,9 +670,9 @@
       inp.value = s.reviewIntervals.join(', ');
     }
     save();
-    if (k === 'dh') regenerateToday();
+    if (k === 'dh' || k === 'openHorizonDays' || k === 'maxSubjectsPerDay') regenerateToday();
     toast('اتحفظ ✓');
-    if (k === 'dh' || k === 'secondLang') renderSettings();
+    if (k === 'dh') renderSettings();
   }
 
   // ---------- الصفحة السفلية ----------
@@ -662,9 +705,10 @@
     const subj = subjectOf(lesson.subjectId);
     const reviews = (lesson.reviews || []).map((r) => `<span class="chip ${r.done ? 'good' : (P.daysBetween(r.due, today()) >= 0 ? 'warn' : '')}">${r.done ? '✓ ' : ''}مراجعة ${r.n}: ${fdate(r.due)}</span>`).join(' ');
     openSheet(`
-      <h2>تعديل درس</h2>
-      <p class="small muted" style="margin-bottom:8px"><span class="dot" style="--c:var(--s${subj ? subj.slot : 0})"></span> ${esc(subj ? subj.name : '')}</p>
-      <div class="field"><label for="ls-title">عنوان الدرس</label><input class="input" id="ls-title" value="${esc(lesson.title)}" maxlength="120" /></div>
+      <h2>تعديل محاضرة</h2>
+      <p class="small muted" style="margin-bottom:8px"><span class="dot" style="--c:var(--s${subj ? subj.slot : 1})"></span> ${esc(subj ? subj.name : '')}</p>
+      ${lesson.done ? '' : `<button class="btn soft block" data-action="set-current" data-id="${lesson.id}" style="margin-bottom:12px">📍 دي المحاضرة اللي أنا فيها دلوقتي</button>`}
+      <div class="field"><label for="ls-title">عنوان المحاضرة</label><input class="input" id="ls-title" value="${esc(lesson.title)}" maxlength="120" /></div>
       <div class="field"><label for="ls-hours">الساعات اللازمة لمذاكرته أول مرة</label><input class="input" id="ls-hours" type="number" min="0.5" max="40" step="0.5" value="${lesson.hours}" inputmode="decimal" /></div>
       <div class="field"><label>مستوى الإتقان</label><div class="seg" id="ls-mastery">${MASTERY.map((m, i) => `<button type="button" class="${(lesson.mastery || 0) === i ? 'on' : ''}" data-v="${i}">${m}</button>`).join('')}</div></div>
       <div class="setting-row"><span>خلصت مذاكرته الأولى</span><button class="switch ${lesson.done ? 'on' : ''}" id="ls-done" role="switch" aria-checked="${lesson.done}"></button></div>
@@ -700,9 +744,11 @@
 
   function addLessonSheet(subject) {
     openSheet(`
-      <h2>درس جديد — ${esc(subject.name)}</h2>
-      <div class="field"><label for="nl-title">عنوان الدرس</label><input class="input" id="nl-title" placeholder="مثال: الفصل 3: الحث الكهرومغناطيسي" maxlength="120" /></div>
-      <div class="field"><label for="nl-hours">الساعات اللازمة</label><input class="input" id="nl-hours" type="number" min="0.5" max="40" step="0.5" value="3" inputmode="decimal" /></div>
+      <h2>محاضرات جديدة — ${esc(subject.name)}</h2>
+      <div class="field"><label for="nl-title">كل سطر محاضرة</label>
+        <textarea class="input" id="nl-title" rows="5" placeholder="المحاضرة 4: الجهاز العصبي&#10;المحاضرة 5 | 3"></textarea>
+        <span class="hint">الساعات بعد علامة | اختيارية.</span></div>
+      <div class="field"><label for="nl-hours">الساعات الافتراضية للمحاضرة</label><input class="input" id="nl-hours" type="number" min="0.5" max="40" step="0.5" value="2" inputmode="decimal" /></div>
       <button class="btn primary block" data-action="save-new-lesson" data-id="${subject.id}">إضافة</button>`);
     setTimeout(() => $('#nl-title').focus(), 50);
   }
@@ -712,7 +758,7 @@
       <h2>${esc(subject.name)}</h2>
       <div class="field"><label for="sj-name">اسم المادة</label><input class="input" id="sj-name" value="${esc(subject.name)}" maxlength="60" /></div>
       <div class="field"><label for="sj-short">اسم مختصر (للبطاقات)</label><input class="input" id="sj-short" value="${esc(subject.short)}" maxlength="14" /></div>
-      <div class="field"><label for="sj-exam">تاريخ الامتحان</label><input class="input" id="sj-exam" type="date" value="${subject.examDate}" /></div>
+      <div class="field"><label for="sj-exam">موعد الامتحان أو التسليم (اختياري)</label><input class="input" id="sj-exam" type="date" value="${subject.examDate || ''}" /><span class="hint">امسح التاريخ لو مفيش موعد.</span></div>
       <div class="setting-row"><span>مضافة للخطة</span><button class="switch ${subject.enabled ? 'on' : ''}" id="sj-enabled" role="switch" aria-checked="${subject.enabled}"></button></div>
       <div class="btn-row" style="margin-top:12px">
         <button class="btn danger" data-action="delete-subject" data-id="${subject.id}">حذف المادة</button>
@@ -722,15 +768,27 @@
   }
 
   function addSubjectSheet() {
-    const used = new Set(state.subjects.map((s) => s.slot));
-    let slot = 1;
-    while (used.has(slot) && slot < 8) slot++;
     openSheet(`
       <h2>مادة جديدة</h2>
-      <div class="field"><label for="ns-name">اسم المادة</label><input class="input" id="ns-name" placeholder="مثال: الرياضيات التطبيقية" maxlength="60" /></div>
-      <div class="field"><label for="ns-short">اسم مختصر</label><input class="input" id="ns-short" placeholder="مثال: تطبيقية" maxlength="14" /></div>
-      <div class="field"><label for="ns-exam">تاريخ الامتحان</label><input class="input" id="ns-exam" type="date" value="${state.profile.examStart}" /></div>
-      <button class="btn primary block" data-action="save-new-subject" data-slot="${slot}">إضافة</button>`);
+      <div class="field"><label for="ns-name">اسم المادة</label><input class="input" id="ns-name" placeholder="مثال: التشريح" maxlength="60" /></div>
+      <div class="field"><label for="ns-short">اسم مختصر (اختياري)</label><input class="input" id="ns-short" placeholder="مثال: تشريح" maxlength="14" /></div>
+      <div class="field"><label for="ns-exam">موعد الامتحان أو التسليم (اختياري)</label><input class="input" id="ns-exam" type="date" /><span class="hint">سيبه فاضي لو مفيش موعد، والخطة هتمشي بسرعة ثابتة.</span></div>
+      <div class="field"><label for="ns-lectures">المحاضرات (كل سطر محاضرة)</label>
+        <textarea class="input" id="ns-lectures" rows="5" placeholder="المحاضرة 1: مقدمة&#10;المحاضرة 2: الجهاز العضلي | 2.5&#10;المحاضرة 3"></textarea>
+        <span class="hint">تقدر تكتب الساعات بعد علامة | (مثال: المحاضرة 2 | 2.5). من غيرها بتتحسب ساعتين.</span></div>
+      <button class="btn primary block" data-action="save-new-subject">إضافة</button>`);
+    setTimeout(() => $('#ns-name').focus(), 50);
+  }
+
+  function pickCurrentSheet(subject) {
+    const cur = P.currentLesson(state, subject);
+    const rows = P.lessonsOf(state, subject.id).filter((l) => !l.done).map((l) =>
+      `<button data-action="set-current" data-id="${l.id}">${cur && cur.id === l.id ? '📍' : '▫️'} ${esc(l.title)}</button>`).join('');
+    openSheet(`
+      <h2>إنت فين في ${esc(subject.name)}؟</h2>
+      <p class="small muted" style="margin-bottom:8px">اختار المحاضرة اللي هتذاكرها الأول. الخطة هتبدأ منها.</p>
+      <div class="menu">${rows || '<p class="muted small" style="padding:12px 0">مفيش محاضرات متبقية. ضيف محاضرات جديدة من تبويب المواد.</p>'}</div>
+      <button class="btn soft block" data-action="add-lesson" data-id="${subject.id}" style="margin-top:10px">＋ ضيف محاضرات</button>`);
   }
 
   function hoursSheet() {
@@ -911,7 +969,7 @@
     const st = P.streak(state, t);
     if (st > 0) lines.push(`🔥 ${st === 1 ? 'يوم واحد' : st === 2 ? 'يومين' : daysText(st)} مذاكرة متواصلة`);
     if (first) lines.push(`⏳ باقي ${daysText(P.daysBetween(t, first.examDate))} على امتحان ${first.short}`);
-    const stl = { green: '✅ في المسار', yellow: '⚠️ محتاج شد شوية', red: '🔴 متأخر عن الخطة', done: '🎉 المنهج خلص' }[pace.status];
+    const stl = { green: '✅ في المسار', yellow: '⚠️ محتاج شد شوية', red: '🔴 متأخر عن الخطة', done: '🎉 المواد خلصت' }[pace.status];
     lines.push(`🚦 ${stl}`);
     lines.push('— من تطبيق العدّاد');
     return lines.join('\n');
@@ -938,17 +996,16 @@
   }
   function planPayload() {
     return {
-      v: 1,
-      trackName: SYL.trackName,
+      v: 2,
       subjects: state.subjects.map((s) => ({
-        key: s.key, name: s.name, short: s.short, slot: s.slot, enabled: s.enabled, examDate: s.examDate, examOffset: s.examOffset || 0,
+        key: s.key, name: s.name, short: s.short, slot: s.slot, enabled: s.enabled, examDate: s.examDate || null,
         lessons: P.lessonsOf(state, s.id).map((l) => [l.title, l.hours]),
       })),
     };
   }
   async function shareLink() {
     const url = location.origin + location.pathname + '#plan=' + b64urlEncode(JSON.stringify(planPayload()));
-    const text = `خطتي للثانوية العامة على العدّاد: ${url}`;
+    const text = `خطة مذاكرتي على العدّاد: ${url}`;
     if (navigator.share) {
       try { await navigator.share({ text }); return; } catch (e) { if (e && e.name === 'AbortError') return; }
     }
@@ -1075,25 +1132,32 @@
     'lesson': (b) => { const l = state.lessons.find((x) => x.id === b.dataset.id); if (l) lessonSheet(l); },
     'save-lesson': (b) => { const l = state.lessons.find((x) => x.id === b.dataset.id); if (l) saveLesson(l); },
     'delete-lesson': (b) => {
-      if (!b.dataset.confirmed) { confirmSheet('حذف الدرس؟', 'هيتشال من المنهج ومن الخطة.', 'delete-lesson', b.dataset.id, true); return; }
+      if (!b.dataset.confirmed) { confirmSheet('حذف المحاضرة؟', 'هتتشال من المادة ومن الخطة.', 'delete-lesson', b.dataset.id, true); return; }
       state.lessons = state.lessons.filter((x) => x.id !== b.dataset.id);
       state.plan.tasks = state.plan.tasks.filter((x) => x.lessonId !== b.dataset.id);
       save(); closeSheet(); render(); toast('اتحذف');
     },
     'add-lesson': (b) => { const s = subjectOf(b.dataset.id); if (s) addLessonSheet(s); },
     'save-new-lesson': (b) => {
-      const title = $('#nl-title').value.trim(); if (!title) { toast('اكتب عنوان الدرس'); return; }
-      const hours = clamp(Number($('#nl-hours').value) || 3, 0.5, 40);
-      const order = P.lessonsOf(state, b.dataset.id).length;
-      state.lessons.push({ id: uid('l'), subjectId: b.dataset.id, title, hours, doneHours: 0, mastery: 0, done: false, completedAt: null, reviews: [], order });
+      const items = parseLectureLines($('#nl-title').value, clamp(Number($('#nl-hours').value) || 2, 0.5, 40));
+      if (!items.length) { toast('اكتب محاضرة واحدة على الأقل'); return; }
+      addLectures(b.dataset.id, items);
       openSubjects.add(b.dataset.id);
-      save(); closeSheet(); render(); toast('اتضاف ✓');
+      save(); closeSheet(); regenerateToday(); render(); toast(items.length === 1 ? 'اتضافت ✓' : `اتضافت ${items.length} محاضرات ✓`);
+    },
+    'pick-current': (b) => { const s = subjectOf(b.dataset.id); if (s) pickCurrentSheet(s); },
+    'set-current': (b) => {
+      const l = state.lessons.find((x) => x.id === b.dataset.id); if (!l) return;
+      const s = subjectOf(l.subjectId); if (!s) return;
+      s.currentLessonId = l.id;
+      // لو المحاضرة دي ماكانتش في خطة النهاردة، نعيد التوزيع عشان الخطة تبدأ منها
+      save(); closeSheet(); regenerateToday(); render(); toast('📍 اتحددت المحاضرة الحالية');
     },
     'subject-menu': (b) => { const s = subjectOf(b.dataset.id); if (s) subjectMenu(s); },
     'save-subject': (b) => {
       const s = subjectOf(b.dataset.id); if (!s) return;
       const name = $('#sj-name').value.trim(); const short = $('#sj-short').value.trim(); const exam = $('#sj-exam').value;
-      if (name) s.name = name; if (short) s.short = short; if (exam) s.examDate = exam;
+      if (name) s.name = name; if (short) s.short = short; s.examDate = exam || null;
       s.enabled = $('#sj-enabled').classList.contains('on');
       save(); closeSheet(); regenerateToday(); render(); toast('اتحفظ ✓');
     },
@@ -1106,26 +1170,23 @@
       save(); closeSheet(); render(); toast('اتحذفت');
     },
     'add-subject': () => addSubjectSheet(),
-    'save-new-subject': (b) => {
+    'save-new-subject': () => {
       const name = $('#ns-name').value.trim(); if (!name) { toast('اكتب اسم المادة'); return; }
       const short = $('#ns-short').value.trim() || name.slice(0, 10);
-      const exam = $('#ns-exam').value || state.profile.examStart;
+      const exam = $('#ns-exam').value || null;
       const id = uid('s');
-      state.subjects.push({ id, key: 'custom', name, short, slot: Number(b.dataset.slot), enabled: true, examDate: exam, examOffset: P.daysBetween(state.profile.examStart, exam) });
+      state.subjects.push({ id, key: 'custom', name, short, slot: nextSlot(), enabled: true, examDate: exam, currentLessonId: null });
+      const items = parseLectureLines($('#ns-lectures').value, 2);
+      if (items.length) addLectures(id, items);
       openSubjects.add(id);
-      save(); closeSheet(); render(); toast('اتضافت ✓ ضيف دروسها دلوقتي');
-    },
-    'apply-exam-dates': () => {
-      const start = $('#st-exam').value || state.profile.examStart;
-      state.profile.examStart = start;
-      for (const s of state.subjects) s.examDate = P.addDays(start, s.examOffset || 0);
-      save(); regenerateToday(); renderSettings(); toast('اتحدثت مواعيد كل المواد ✓');
+      save(); closeSheet(); regenerateToday(); render();
+      toast(items.length ? `اتضافت ${name} بـ ${items.length} محاضرات ✓` : 'اتضافت ✓ ضيف محاضراتها دلوقتي');
     },
     'theme': (b) => { state.settings.theme = b.dataset.v; save(); applyTheme(); renderSettings(); },
     'share-link': () => shareLink(),
     'export': () => exportJSON(),
     'reset': (b) => {
-      if (!b.dataset.confirmed) { confirmSheet('مسح كل البيانات؟', 'هيتمسح المنهج والتقدم والسجل نهائياً. اعمل نسخة احتياطية الأول لو عايز.', 'reset', '', true); return; }
+      if (!b.dataset.confirmed) { confirmSheet('مسح كل البيانات؟', 'هتتمسح المواد والتقدم والسجل نهائياً. اعمل نسخة احتياطية الأول لو عايز.', 'reset', '', true); return; }
       localStorage.removeItem(STORE_KEY);
       closeSheet();
       location.hash = '';
@@ -1135,7 +1196,7 @@
     'import-plan': (b) => {
       if (!b.dataset.confirmed) { confirmSheet('استيراد الخطة من الرابط؟', 'هتستبدل المواد والدروس الحالية، وتقدمك فيها هيتمسح. السجل والإعدادات هيفضلوا.', 'import-plan', '', true); return; }
       const p = parseSharedPlan(); if (!p) { closeSheet(); return; }
-      const { subjects, lessons } = buildSubjectsFromSeed(p, state.profile.examStart, state.profile.secondLang);
+      const { subjects, lessons } = buildSubjectsFromSeed(p);
       state.subjects = subjects; state.lessons = lessons; state.plan = null;
       save(); closeSheet(); history.replaceState(null, '', location.pathname); render(); toast('اتستوردت الخطة ✓');
     },
@@ -1149,7 +1210,7 @@
     if (fn) { e.preventDefault(); fn(b, e); }
   });
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && e.target.matches('.lesson[data-action]')) { e.preventDefault(); actions.lesson(e.target); }
+    if (e.key === 'Enter' && e.target.matches('.lesson[data-action]')) { e.preventDefault(); const fn = actions[e.target.dataset.action]; if (fn) fn(e.target, e); }
     if (e.key === 'Escape') closeSheet();
   });
   $('#sheet-backdrop').addEventListener('click', closeSheet);
@@ -1162,18 +1223,10 @@
   window.addEventListener('appinstalled', () => { deferredInstall = null; toast('اتثبّت العدّاد 🎉'); });
 
   // ---------- الترحيب ----------
-  function defaultExamDate() {
-    const now = new Date();
-    const y = now.getMonth() >= 5 && now.getDate() > 13 || now.getMonth() > 5 ? now.getFullYear() + 1 : now.getFullYear();
-    return `${y}-06-13`;
-  }
   function showOnboarding() {
     $('#view-onboarding').classList.remove('hidden');
     $('#nav').classList.add('hidden');
-    $('#onb-exam').value = defaultExamDate();
     if (pendingSharedPlan) {
-      const dates = pendingSharedPlan.subjects.map((s) => s.examDate).filter(Boolean).sort();
-      if (dates[0]) $('#onb-exam').value = dates[0];
       const note = document.createElement('div');
       note.className = 'banner';
       note.textContent = '🔗 فيه خطة جاية من رابط صاحبك، هتتحمّل تلقائياً.';
@@ -1181,17 +1234,12 @@
     }
     $('#onb-form').addEventListener('submit', (e) => {
       e.preventDefault();
-      const examStart = $('#onb-exam').value || defaultExamDate();
       state = createState({
         name: $('#onb-name').value.trim(),
-        examStart,
-        l2: $('#onb-l2').value,
         schoolHours: clamp(Number($('#onb-h-school').value) || 3, 0, 16),
         offHours: clamp(Number($('#onb-h-off').value) || 5, 0, 16),
       });
       if (pendingSharedPlan) {
-        // الخطة المشاركة بتحمل تواريخها بنفسها
-        pendingSharedPlan.subjects.forEach((ps, i) => { if (ps.examDate && state.subjects[i]) state.subjects[i].examDate = ps.examDate; });
         pendingSharedPlan = null;
         history.replaceState(null, '', location.pathname);
       }
@@ -1200,7 +1248,7 @@
       $('#nav').classList.remove('hidden');
       applyTheme();
       show('today');
-      toast('خطتك جاهزة 🚀');
+      toast(state.subjects.length ? 'خطتك جاهزة 🚀' : 'ابدأ بإضافة أول مادة 📚');
     });
   }
 

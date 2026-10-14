@@ -35,6 +35,11 @@
     return toDate(key).getDay(); // 0 = الأحد
   }
 
+  // موعد الامتحان اختياري: مادة من غير موعد بتفضل مفتوحة
+  function hasExam(s) { return !!s.examDate; }
+  function expired(s, today) { return !!s.examDate && daysBetween(today, s.examDate) < 0; }
+  function openHorizon(state) { return (state.settings && state.settings.openHorizonDays) || 21; }
+
   // ---------- استعلامات الحالة ----------
   function subjectById(state, id) {
     return state.subjects.find((s) => s.id === id);
@@ -47,7 +52,12 @@
     return Math.max(0, l.hours - (l.doneHours || 0));
   }
   function activeSubjects(state, today) {
-    return state.subjects.filter((s) => s.enabled && daysBetween(today, s.examDate) >= 0);
+    return state.subjects.filter((s) => s.enabled && !expired(s, today));
+  }
+  // المحاضرة الحالية: اللي الطالب اختارها، وإلا أول محاضرة لسه ماخلصتش
+  function currentLesson(state, subject) {
+    const ls = lessonsOf(state, subject.id);
+    return ls.find((l) => l.id === subject.currentLessonId && !l.done) || ls.find((l) => !l.done) || null;
   }
   function availableHours(state, key) {
     if (state.dayOverrides && state.dayOverrides[key] != null) return state.dayOverrides[key];
@@ -66,7 +76,7 @@
     for (const l of state.lessons) {
       if (!l.reviews) continue;
       const subj = subjectById(state, l.subjectId);
-      if (!subj || !subj.enabled || daysBetween(today, subj.examDate) < 0) continue;
+      if (!subj || !subj.enabled || expired(subj, today)) continue;
       for (const r of l.reviews) {
         if (!r.done && daysBetween(r.due, today) >= 0) {
           out.push({ lesson: l, subject: subj, review: r, overdueDays: daysBetween(r.due, today) });
@@ -90,8 +100,8 @@
       const total = ls.reduce((a, l) => a + l.hours, 0);
       const remaining = ls.reduce((a, l) => a + remainingOfLesson(l), 0);
       const doneCount = ls.filter((l) => l.done).length;
-      const daysLeft = daysBetween(today, s.examDate);
-      const effDays = Math.max(1, daysLeft - (state.settings.bufferDays || 2));
+      const daysLeft = s.examDate ? daysBetween(today, s.examDate) : null;
+      const effDays = daysLeft != null ? Math.max(1, daysLeft - (state.settings.bufferDays || 2)) : openHorizon(state);
       const mastery = ls.length ? ls.reduce((a, l) => a + (l.mastery || 0), 0) / (ls.length * 3) : 0;
       return {
         subject: s,
@@ -103,18 +113,18 @@
         progress: total ? (total - remaining) / total : 0,
         mastery,
         daysLeft,
-        loadPerDay: s.enabled && daysLeft >= 0 ? remaining / effDays : 0,
+        loadPerDay: s.enabled && (daysLeft == null || daysLeft >= 0) ? remaining / effDays : 0,
       };
     });
   }
 
   // ---------- مؤشر السرعة ----------
   function pace(state, today) {
-    const stats = subjectStats(state, today).filter((x) => x.subject.enabled && x.daysLeft >= 0);
+    const stats = subjectStats(state, today).filter((x) => x.subject.enabled && (x.daysLeft == null || x.daysLeft >= 0));
     const pendingReviewHours = state.lessons.reduce((a, l) => {
       if (!l.reviews) return a;
       const subj = subjectById(state, l.subjectId);
-      if (!subj || !subj.enabled || daysBetween(today, subj.examDate) < 0) return a;
+      if (!subj || !subj.enabled || expired(subj, today)) return a;
       return a + l.reviews.filter((r) => !r.done).length * (reviewMinutes(l) / 60);
     }, 0);
     const remainingTotal = stats.reduce((a, x) => a + x.remainingHours, 0);
@@ -129,12 +139,12 @@
     return { requiredPerDay, availablePerDay, ratio, status, remainingTotal, pendingReviewHours };
   }
   function firstExam(state, today) {
-    const act = activeSubjects(state, today).slice().sort((a, b) => daysBetween(b.examDate, a.examDate));
+    const act = activeSubjects(state, today).filter(hasExam).sort((a, b) => daysBetween(b.examDate, a.examDate));
     return act[0] || null;
   }
   function firstExamDays(state, today) {
     const f = firstExam(state, today);
-    return f ? daysBetween(today, f.examDate) : 0;
+    return f ? daysBetween(today, f.examDate) : openHorizon(state);
   }
 
   // ---------- السرعة الفعلية وتاريخ الانتهاء المتوقع ----------
@@ -211,9 +221,9 @@
 
     // 1) وضع الامتحانات: المادة اللي امتحانها قريب تاخد اليوم كله
     const focusDays = state.settings.examFocusDays != null ? state.settings.examFocusDays : 3;
-    const nearest = subjects.slice().sort((a, b) => daysBetween(b.examDate, a.examDate))[0];
-    const nearestIn = daysBetween(today, nearest.examDate);
-    if (nearestIn <= focusDays) {
+    const nearest = subjects.filter(hasExam).sort((a, b) => daysBetween(b.examDate, a.examDate))[0];
+    const nearestIn = nearest ? daysBetween(today, nearest.examDate) : Infinity;
+    if (nearest && nearestIn <= focusDays) {
       const ls = lessonsOf(state, nearest.id)
         .filter((l) => !exclude.has(l.id))
         .sort((a, b) => (a.mastery || 0) - (b.mastery || 0) || a.order - b.order);
@@ -245,7 +255,7 @@
 
     // 3) توزيع المذاكرة الجديدة على أعلى 3 مواد احتياجاً
     const scored = subjectStats(state, today)
-      .filter((x) => x.subject.enabled && x.daysLeft >= 0)
+      .filter((x) => x.subject.enabled && (x.daysLeft == null || x.daysLeft >= 0))
       .map((x) => {
         const remainingLessons = x.lessons.filter((l) => !l.done && !exclude.has(l.id) && remainingOfLesson(l) > 0);
         if (!remainingLessons.length) return null;
@@ -280,11 +290,10 @@
     for (const a of allocs) {
       let left = a.minutes;
       // كمّل الدرس اللي بدأته قبل ما تبدأ جديد
-      const ordered = a.p.remainingLessons.slice().sort((x, y) => {
-        const px = (x.doneHours || 0) > 0 ? 0 : 1;
-        const py = (y.doneHours || 0) > 0 ? 0 : 1;
-        return px - py || x.order - y.order;
-      });
+      // المحاضرة الحالية الأول، وبعدها اللي اتبدأت، وبعدها الترتيب العادي
+      const cur = currentLesson(state, a.p.stat.subject);
+      const rank = (l) => (cur && l.id === cur.id ? 0 : (l.doneHours || 0) > 0 ? 1 : 2);
+      const ordered = a.p.remainingLessons.slice().sort((x, y) => rank(x) - rank(y) || x.order - y.order);
       for (const l of ordered) {
         if (left < 15) break;
         const need = Math.round(remainingOfLesson(l) * 60);
@@ -318,7 +327,7 @@
     lesson.reviews = [];
     intervals.forEach((d, i) => {
       const due = addDays(today, d);
-      if (!subj || daysBetween(due, subj.examDate) >= 1) {
+      if (!subj || !subj.examDate || daysBetween(due, subj.examDate) >= 1) {
         lesson.reviews.push({ n: i + 1, due, done: false });
       }
     });
@@ -326,7 +335,7 @@
 
   global.Planner = {
     dayKey, toDate, addDays, daysBetween, weekday,
-    subjectById, lessonsOf, remainingOfLesson, activeSubjects,
+    subjectById, lessonsOf, remainingOfLesson, activeSubjects, currentLesson, hasExam, expired,
     availableHours, avgWeeklyHours, dueReviews, reviewMinutes,
     subjectStats, pace, firstExam, firstExamDays,
     velocity, projectedFinish, streak,

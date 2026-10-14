@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <title>العدّاد — خطة مذاكرة ذكية للثانوية العامة</title>
-  <meta name="description" content="خطة مذاكرة يومية بتصلّح نفسها، عدّ تنازلي للامتحانات، مراجعة متباعدة، بومودورو، وتقرير يومي على واتساب. مجاني وبيشتغل أوفلاين." />
+  <title>العدّاد — خطة مذاكرة ذكية</title>
+  <meta name="description" content="خطة مذاكرة يومية مادة بمادة بتصلّح نفسها، اختيار المحاضرة الحالية، مراجعة متباعدة، بومودورو، وتقرير يومي على واتساب. مجاني وبيشتغل أوفلاين." />
   <meta name="theme-color" content="#1c5cab" media="(prefers-color-scheme: light)" />
   <meta name="theme-color" content="#0d0d0d" media="(prefers-color-scheme: dark)" />
   <meta name="mobile-web-app-capable" content="yes" />
@@ -25,43 +25,30 @@
     <section id="view-onboarding" class="onb hidden" aria-label="الإعداد الأول">
       <img class="logo" src="./icons/icon-192.png" alt="" />
       <h1>العدّاد</h1>
-      <p class="lead">خطة مذاكرة للثانوية العامة بتتبني كل يوم من جديد، فمفيش يوم فايت بيتراكم عليك.</p>
+      <p class="lead">مذاكرة مادة بمادة، ومحاضرة بمحاضرة. إنت بتضيف موادّك، والخطة بتتبني كل يوم من جديد، فمفيش يوم فايت بيتراكم عليك.</p>
       <div class="features">
+        <div><span>📍</span><span><b>إنت اللي بتختار:</b> بتحدد المادة والمحاضرة اللي إنت فيها دلوقتي، والخطة بتمشي وراك.</span></div>
         <div><span>🔁</span><span><b>خطة بتصلّح نفسها:</b> فاتك يوم؟ الباقي بيتوزع تلقائياً على الأيام اللي فاضلة.</span></div>
-        <div><span>🧠</span><span><b>مراجعة متباعدة:</b> كل درس بيترجع لك بعد يوم، وأسبوع، وشهر.</span></div>
-        <div><span>🎯</span><span><b>وضع الامتحانات:</b> قبل كل امتحان، الوقت كله لمادته.</span></div>
-        <div><span>📈</span><span><b>مرآة صادقة:</b> بسرعتك الحالية هتخلص المنهج إمتى؟</span></div>
+        <div><span>🧠</span><span><b>مراجعة متباعدة:</b> كل محاضرة بترجع لك بعد يوم، وأسبوع، وشهر.</span></div>
+        <div><span>📈</span><span><b>مرآة صادقة:</b> بسرعتك الحالية هتخلص موادّك إمتى؟</span></div>
       </div>
       <form id="onb-form" class="card" autocomplete="off">
         <div class="field">
           <label for="onb-name">اسمك (اختياري)</label>
           <input class="input" id="onb-name" placeholder="مثال: أحمد" maxlength="30" />
         </div>
-        <div class="field">
-          <label for="onb-exam">تاريخ أول امتحان في الثانوية العامة</label>
-          <input class="input" id="onb-exam" type="date" required />
-          <span class="hint">تقدر تعدّل تاريخ كل مادة بعدين من الإعدادات.</span>
-        </div>
-        <div class="field">
-          <label for="onb-l2">اللغة الأجنبية الثانية</label>
-          <select class="input" id="onb-l2">
-            <option value="fr">الفرنسية</option>
-            <option value="de">الألمانية</option>
-            <option value="it">الإيطالية</option>
-            <option value="es">الإسبانية</option>
-          </select>
-        </div>
         <div class="grid-2">
           <div class="field">
-            <label for="onb-h-school">ساعات المذاكرة يوم الدراسة</label>
+            <label for="onb-h-school">ساعات المذاكرة في الأيام العادية</label>
             <input class="input" id="onb-h-school" type="number" min="0" max="16" step="0.5" value="3" />
           </div>
           <div class="field">
-            <label for="onb-h-off">ساعات المذاكرة يوم الإجازة</label>
+            <label for="onb-h-off">ساعات المذاكرة الجمعة والسبت</label>
             <input class="input" id="onb-h-off" type="number" min="0" max="16" step="0.5" value="5" />
           </div>
         </div>
-        <button class="btn primary block" type="submit">جهّز خطتي 🚀</button>
+        <span class="hint">هتضيف موادّك ومحاضراتك في الخطوة الجاية.</span>
+        <button class="btn primary block" type="submit" style="margin-top:12px">ابدأ 🚀</button>
         <p class="hint xs" style="margin-top:8px;text-align:center">كل بياناتك بتتخزن على جهازك بس. مفيش حساب ولا سيرفر.</p>
       </form>
     </section>
@@ -69,7 +56,7 @@
     <!-- اليوم -->
     <section id="view-today" class="view hidden" aria-label="خطة اليوم"></section>
     <!-- المنهج -->
-    <section id="view-syllabus" class="view hidden" aria-label="المنهج"></section>
+    <section id="view-syllabus" class="view hidden" aria-label="المواد"></section>
     <!-- التقدم -->
     <section id="view-progress" class="view hidden" aria-label="التقدم"></section>
     <!-- الإعدادات -->
@@ -81,9 +68,9 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="3"/><path d="M16 2v4M8 2v4M3 10h18M9 16l2 2 4-4"/></svg>
         <span>اليوم</span>
       </button>
-      <button data-view="syllabus" aria-label="المنهج">
+      <button data-view="syllabus" aria-label="المواد">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
-        <span>المنهج</span>
+        <span>المواد</span>
       </button>
       <button data-view="progress" aria-label="التقدم">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 14l4-4 4 4 5-6"/></svg>
