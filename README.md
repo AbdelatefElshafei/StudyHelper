@@ -45,37 +45,11 @@ python -m http.server 5173
 
 ## النشر مجاناً على GitHub Pages
 
-1. المستودع: `AbdelatefElshafei/StudyHelper`.
-2. من داخل المجلد ده:
+التطبيق منشور على: **https://abdelatefelshafei.github.io/StudyHelper/**
 
-```bash
-git init
-```
+النشر تلقائي: أي `git push` على فرع `main` بيشغّل الـ workflow في `.github/workflows/pages.yml` وبينشر الموقع خلال دقيقة (مجاني للمستودعات العامة). في إعدادات الريبو، Pages → Source لازم يكون **GitHub Actions**.
 
-```bash
-git add .
-```
-
-```bash
-git commit -m "العدّاد: الإصدار الأول"
-```
-
-```bash
-git branch -M main
-```
-
-```bash
-git remote add origin https://github.com/AbdelatefElshafei/StudyHelper.git
-```
-
-```bash
-git push -u origin main
-```
-
-3. على GitHub: **Settings → Pages → Build and deployment → Source: Deploy from a branch → Branch: `main` / `(root)` → Save**.
-4. بعد دقيقة الرابط هيكون: `https://abdelatefelshafei.github.io/StudyHelper/`
-
-كل المسارات في المشروع نسبية، فالتطبيق بيشتغل من أي مجلد فرعي بدون تعديل.
+لو عايز تنشر نسختك الخاصة: اعمل Fork أو ريبو جديد، ارفع الملفات، وفعّل Pages بمصدر GitHub Actions. كل المسارات في المشروع نسبية، فالتطبيق بيشتغل من أي مجلد فرعي بدون تعديل.
 
 ### بدائل مجانية بنفس السهولة
 - **Netlify Drop**: افتح `app.netlify.com/drop` واسحب المجلد كله. رابط فوري.
