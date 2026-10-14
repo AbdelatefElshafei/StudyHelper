@@ -1,5 +1,5 @@
 /* العدّاد — Service Worker: يخلي التطبيق يشتغل أوفلاين بالكامل */
-const VERSION = 'addad-v1.1.0';
+const VERSION = 'addad-v1.1.1';
 const SHELL = [
   './',
   './index.html',
@@ -17,7 +17,7 @@ const SHELL = [
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches.open(VERSION).then((cache) => cache.addAll(SHELL)).then(() => self.skipWaiting())
+    caches.open(VERSION).then((cache) => cache.addAll(SHELL.map((u) => new Request(u, { cache: 'reload' })))).then(() => self.skipWaiting())
   );
 });
 
@@ -34,17 +34,20 @@ self.addEventListener('fetch', (event) => {
   if (req.method !== 'GET') return;
   const url = new URL(req.url);
 
-  // ملفات التطبيق نفسها: من الكاش فوراً، وتحديث في الخلفية (stale-while-revalidate)
-  // كده التطبيق بيفتح لحظياً وأوفلاين، وأي تحديث مرفوع بيوصل في الفتحة اللي بعدها.
+  // ملفات التطبيق نفسها: الشبكة أولاً (عشان كل الملفات تبقى من نفس النسخة)،
+  // ولو مفيش نت يرجع للكاش فيشتغل أوفلاين.
   if (url.origin === location.origin) {
     event.respondWith(
-      caches.open(VERSION).then(async (cache) => {
-        const hit = await cache.match(req, { ignoreSearch: true });
-        const net = fetch(req).then((res) => {
-          if (res && res.ok) cache.put(req, res.clone());
-          return res;
-        }).catch(() => hit || (req.mode === 'navigate' ? cache.match('./index.html') : undefined));
-        return hit || net;
+      fetch(req, { cache: 'no-cache' }).then((res) => {
+        if (res && res.ok) {
+          const copy = res.clone();
+          caches.open(VERSION).then((c) => c.put(req, copy));
+        }
+        return res;
+      }).catch(async () => {
+        const cache = await caches.open(VERSION);
+        return (await cache.match(req, { ignoreSearch: true })) ||
+          (req.mode === 'navigate' ? cache.match('./index.html') : undefined);
       })
     );
     return;
